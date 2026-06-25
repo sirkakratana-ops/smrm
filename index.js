@@ -23,7 +23,7 @@ if (process.env.RENDER_EXTERNAL_URL) {
 
 // Command: /start
 bot.command('start', (ctx) => {
-    ctx.reply('សូមស្វាគមន៍មកកាន់ហាងកសិកម្ម ស្រែមាន! សូមចែករំលែកលេខទូរស័ព្ទរបស់អ្នកដើម្បីពិនិត្យប្រវត្តិកុម្មង់។', 
+    ctx.reply('សូមស្វាគមន៍មកកាន់ហាងកសិកម្ម ស្រែមាស! សូមចែករំលែកលេខទូរស័ព្ទរបស់អ្នកដើម្បីពិនិត្យប្រវត្តិកុម្មង់។', 
         Markup.keyboard([
             Markup.button.contactRequest('📲 ចែករំលែកលេខទូរស័ព្ទ (Share Contact)')
         ]).oneTime().resize()
@@ -33,11 +33,18 @@ bot.command('start', (ctx) => {
 // Handler: When user clicks "Share Contact"
 bot.on('contact', async (ctx) => {
     let phone = ctx.message.contact.phone_number;
+
+    // Remove all spaces, dashes, or parentheses to make it numbers-only
+    phone = phone.replace(/[^0-9]/g, ''); 
     
-    // Normalize phone number format (Telegram sometimes strips or leaves the '+')
-    if (!phone.startsWith('+')) {
-        phone = '+' + phone;
-    }
+    // Add a single '+' at the front so it matches standard global format
+    phone = '+' + phone; 
+
+    // Now phone becomes exactly: "+85515612512"
+    console.log("Searching database for:", phone); 
+    
+    // ... rest of your supabase lookup code remains the same ...
+
 
     try {
         // Fetch the customer from Supabase by phone
