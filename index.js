@@ -44,8 +44,6 @@ if (!phone.startsWith('+')) {
     phone = '+' + phone;
 }
 
-console.log("👉 REAL DB SEARCHING STRING IS NOW:", phone);
-
         console.log("Searching database for phone number:", phone); 
 
         // Fetch the customer from Supabase by phone
