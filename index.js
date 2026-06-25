@@ -23,7 +23,7 @@ if (process.env.RENDER_EXTERNAL_URL) {
 
 // Command: /start
 bot.command('start', (ctx) => {
-    ctx.reply('សូមស្វាគមន៍មកកាន់ហាងកសិកម្ម ស្រែមាស! សូមចែករំលែកលេខទូរស័ព្ទរបស់អ្នកដើម្បីពិនិត្យប្រវត្តិកុម្មង់។', 
+    ctx.reply('សូមស្វាគមន៍មកកាន់ហាងកសិកម្ម ស្រែមាន! សូមចែករំលែកលេខទូរស័ព្ទរបស់អ្នកដើម្បីពិនិត្យប្រវត្តិកុម្មង់។', 
         Markup.keyboard([
             Markup.button.contactRequest('📲 ចែករំលែកលេខទូរស័ព្ទ (Share Contact)')
         ]).oneTime().resize()
@@ -32,21 +32,17 @@ bot.command('start', (ctx) => {
 
 // Handler: When user clicks "Share Contact"
 bot.on('contact', async (ctx) => {
-    let phone = ctx.message.contact.phone_number;
-
-    // Remove all spaces, dashes, or parentheses to make it numbers-only
-    phone = phone.replace(/[^0-9]/g, ''); 
-    
-    // Add a single '+' at the front so it matches standard global format
-    phone = '+' + phone; 
-
-    // Now phone becomes exactly: "+85515612512"
-    console.log("Searching database for:", phone); 
-    
-    // ... rest of your supabase lookup code remains the same ...
-
-
     try {
+        let phone = ctx.message.contact.phone_number;
+
+        // Remove all spaces, dashes, or parentheses to make it numbers-only
+        phone = phone.replace(/[^0-9]/g, ''); 
+        
+        // Add a single '+' at the front so it matches standard global format
+        phone = '+' + phone; 
+
+        console.log("Searching database for phone number:", phone); 
+
         // Fetch the customer from Supabase by phone
         const { data: customer, error: custError } = await supabase
             .from('customers')
@@ -55,6 +51,7 @@ bot.on('contact', async (ctx) => {
             .single();
 
         if (custError || !customer) {
+            console.log("Supabase Look-up failed or customer not found for:", phone);
             return ctx.reply('❌ រកមិនឃើញលេខទូរស័ព្ទរបស់អ្នកក្នុងប្រព័ន្ធឡើយ។ សូមទាក់ទងមកហាងផ្ទាល់ដើម្បីចុះឈ្មោះ។');
         }
 
@@ -99,8 +96,8 @@ bot.on('contact', async (ctx) => {
         await ctx.reply(report, { parse_mode: 'Markdown' });
 
     } catch (err) {
-        console.error(err);
-        ctx.reply('❌ មានបញ្ហាបច្ចេកទេសក្នុងការទាញយកទិន្នន័យ។ សូមព្យាយាមម្តងទៀតនៅពេលក្រោយ។');
+        console.error("Critical Runtime Error:", err);
+        ctx.reply('❌ មានបញ្ហាបច្គេកទេសក្នុងការទាញយកទិន្នន័យ។ សូមព្យាយាមម្តងទៀតនៅពេលក្រោយ។');
     }
 });
 
