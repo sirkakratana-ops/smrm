@@ -33,13 +33,18 @@ bot.command('start', (ctx) => {
 // Handler: When user clicks "Share Contact"
 bot.on('contact', async (ctx) => {
     try {
-        let phone = ctx.message.contact.phone_number;
+        //  NEW SMART CODE
+let phone = ctx.message.contact.phone_number;
 
-        // Remove all spaces, dashes, or parentheses to make it numbers-only
-        phone = phone.replace(/[^0-9]/g, ''); 
-        
-        // Add a single '+' at the front so it matches standard global format
-        phone = '+' + phone; 
+// 1. Strip out all spaces, hyphens, or special characters
+phone = phone.replace(/[^0-9+]/g, ''); 
+
+// 2. If Telegram stripped the plus sign, add it back safely
+if (!phone.startsWith('+')) {
+    phone = '+' + phone;
+}
+
+console.log("👉 REAL DB SEARCHING STRING IS NOW:", phone);
 
         console.log("Searching database for phone number:", phone); 
 
