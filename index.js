@@ -124,7 +124,7 @@ bot.on('contact', async (ctx) => {
         // 8. Construct the clean Khmer Report Response String
         let report = `🌾 *សូមជូនរបាយការណ៍ប្រចាំឆ្នាំ*\n`;
         report += `ឈ្មោះ: *${customer.name}*\n`;
-        report += `គិតចាប់ពី: ${startDate.toLocaleDateString('km-KH')} ដល់ ${endDate.toLocaleDateString('km-KH')}\n`;
+        report += `📅: ${startDate.toLocaleDateString('km-KH')} ដល់ ${endDate.toLocaleDateString('km-KH')}\n`;
         report += `-------------------------------\n`;
         report += `ជីគ្រាប់ (Granular): $${granularUSD.toLocaleString()} (${getPct(granularUSD)}%)\n`;
         report += `ជីទឹក (Liquid): $${liquidUSD.toLocaleString()} (${getPct(liquidUSD)}%)\n`;
