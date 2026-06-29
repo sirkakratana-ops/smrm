@@ -125,17 +125,17 @@ bot.on('contact', async (ctx) => {
         let report = `🌾 *សូមជូនរបាយការណ៍ប្រចាំឆ្នាំ*\n`;
         report += `ឈ្មោះ: *${customer.name}*\n`;
         report += `📅: ${startDate.toLocaleDateString('km-KH')} ដល់ ${endDate.toLocaleDateString('km-KH')}\n`;
-        report += `-------------------------------\n`;
+        report += `-----------------------------\n`;
         report += `ជីគ្រាប់ Granular: $${granularUSD.toLocaleString()} (${getPct(granularUSD)}%)\n`;
         report += `ជីទឹក Liquid: $${liquidUSD.toLocaleString()} (${getPct(liquidUSD)}%)\n`;
         report += `ជីម្សៅ Powder: $${powderUSD.toLocaleString()} (${getPct(powderUSD)}%)\n\n`;
         report += `*សរុបជី Subtotal: $${fertilizerSubUSD.toLocaleString()} (${getPct(fertilizerSubUSD)}%)*\n`;
-        report += `-------------------------------\n`;
+        report += `-----------------------------\n`;
         report += `ថ្នាំស្មៅ Herbicide: $${herbicideUSD.toLocaleString()} (${getPct(herbicideUSD)}%)\n`;
         report += `ថ្នាំសត្វល្អិត Pesticide: $${pesticideUSD.toLocaleString()} (${getPct(pesticideUSD)}%)\n`;
         report += `ថ្នាំជំងឺ Fungicide: $${fungicideUSD.toLocaleString()} (${getPct(fungicideUSD)}%)\n\n`;
         report += `*សរុបថ្នាំ Subtotal: $${medicineSubUSD.toLocaleString()} (${getPct(medicineSubUSD)}%)*\n`;
-        report += `-------------------------------\n`;
+        report += `-----------------------------\n`;
         report += `💰 *សរុបរួម Grand Total: $${grandTotalUSD.toLocaleString()}*`;
 
         // Send the complete summary with a close button
