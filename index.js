@@ -20,11 +20,27 @@ if (process.env.RENDER_EXTERNAL_URL) {
 }
 
 // --- TELEGRAM BOT LOGIC ---
+
+// Command: /start (Restored so users have a button to click)
+bot.command('start', (ctx) => {
+    ctx.reply('សូមស្វាគមន៍មកកាន់ហាងកសិកម្ម ស្រែមាន! សូមចែករំលែកលេខទូរស័ព្ទរបស់អ្នកដើម្បីពិនិត្យប្រវត្តិកុម្មង់។', 
+        Markup.keyboard([
+            Markup.button.contactRequest('📲 ចែករំលែកលេខទូរស័ព្ទ (Share Contact)')
+        ]).oneTime().resize()
+    );
+});
+
+// Handler: When user clicks "Share Contact"
 bot.on('contact', async (ctx) => {
     try {
         let phone = ctx.message.contact.phone_number;
         phone = phone.replace(/[^0-9+]/g, ''); 
-        if (!phone.startsWith('+')) phone = '+' + phone;
+        
+        if (!phone.startsWith('+')) {
+            phone = '+' + phone;
+        }
+
+        console.log("👉 Executing dynamic 1-year report lookup for phone:", phone);
 
         // 1. Fetch the customer
         const { data: customer, error: custError } = await supabase
@@ -38,9 +54,9 @@ bot.on('contact', async (ctx) => {
         }
 
         // 2. Calculate the rolling 1-year dates
-        const endDate = new Date(); // Right now (e.g., 29 June 2026)
+        const endDate = new Date(); 
         const startDate = new Date();
-        startDate.setFullYear(endDate.getFullYear() - 1); // Exactly 1 year ago (e.g., 29 June 2025)
+        startDate.setFullYear(endDate.getFullYear() - 1); 
 
         // 3. Fetch all invoice items for this customer within the rolling year date range
         const { data: items, error: itemError } = await supabase
@@ -96,7 +112,7 @@ bot.on('contact', async (ctx) => {
         const fertilizerSubUSD = toUSD(totalFertilizerRiel);
 
         const herbicideUSD = toUSD(totals['Herbicide']);
-        const pesticideUSD = toUSD(totals['Pesticide']);
+        const pesticideUSD = toUSD(totals['Pesticide']); // Fixed spelling typo here
         const fungicideUSD = toUSD(totals['Fungicide']);
         const medicineSubUSD = toUSD(totalMedicineRiel);
         
@@ -110,17 +126,17 @@ bot.on('contact', async (ctx) => {
         report += `ឈ្មោះ: *${customer.name}*\n`;
         report += `គិតចាប់ពី: ${startDate.toLocaleDateString('km-KH')} ដល់ ${endDate.toLocaleDateString('km-KH')}\n`;
         report += `----------------------------------\n`;
-        report += `ជីគ្រាប់ (Granular): $${granularUSD.toLocaleString()}/$ (${getPct(granularUSD)}%)\n`;
-        report += `ជីទឹក (Liquid): $${liquidUSD.toLocaleString()}/$ (${getPct(liquidUSD)}%)\n`;
-        report += `ជីម្សៅ (Powder): $${powderUSD.toLocaleString()}/$ (${getPct(powderUSD)}%)\n\n`;
-        report += `*សរុបជី (Subtotal): $${fertilizerSubUSD.toLocaleString()}/$ (${getPct(fertilizerSubUSD)}%)*\n`;
+        report += `ជីគ្រាប់ (Granular): $${granularUSD.toLocaleString()} (${getPct(granularUSD)}%)\n`;
+        report += `ជីទឹក (Liquid): $${liquidUSD.toLocaleString()} (${getPct(liquidUSD)}%)\n`;
+        report += `ជីម្សៅ (Powder): $${powderUSD.toLocaleString()} (${getPct(powderUSD)}%)\n\n`;
+        report += `*សរុបជី (Subtotal): $${fertilizerSubUSD.toLocaleString()} (${getPct(fertilizerSubUSD)}%)*\n`;
         report += `----------------------------------\n`;
-        report += `ថ្នាំស្មៅ (Herbicide): $${herbicideUSD.toLocaleString()}/$ (${getPct(herbicideUSD)}%)\n`;
-        report += `ថ្នាំសត្វល្អិត (Pesticide): $${pesticidUSD.toLocaleString()}/$ (${getPct(pesticideUSD)}%)\n`;
-        report += `ថ្នាំជំងឺ (Fungicide): $${fungicideUSD.toLocaleString()}/$ (${getPct(fungicideUSD)}%)\n\n`;
-        report += `*សរុបថ្នាំ (Subtotal): $${medicineSubUSD.toLocaleString()}/$ (${getPct(medicineSubUSD)}%)*\n`;
+        report += `ថ្នាំស្មៅ (Herbicide): $${herbicideUSD.toLocaleString()} (${getPct(herbicideUSD)}%)\n`;
+        report += `ថ្នាំសត្វល្អិត (Pesticide): $${pesticideUSD.toLocaleString()} (${getPct(pesticideUSD)}%)\n`;
+        report += `ថ្នាំជំងឺ (Fungicide): $${fungicideUSD.toLocaleString()} (${getPct(fungicideUSD)}%)\n\n`;
+        report += `*សរុបថ្នាំ (Subtotal): $${medicineSubUSD.toLocaleString()} (${getPct(medicineSubUSD)}%)*\n`;
         report += `----------------------------------\n`;
-        report += `💰 *សរុបរួម (Grand Total): $${grandTotalUSD.toLocaleString()}/$*`;
+        report += `💰 *សរុបរួម (Grand Total): $${grandTotalUSD.toLocaleString()}*`;
 
         // Send the complete summary with a close button
         await ctx.reply(report, { 
@@ -131,9 +147,20 @@ bot.on('contact', async (ctx) => {
         });
 
     } catch (err) {
-        console.error(err);
+        console.error("Critical Execution Error inside bot.on:", err);
         ctx.reply('❌ មានបញ្ហាបច្ចេកទេសក្នុងការគណនារបាយការណ៍។');
     }
+});
+
+// Callback listener to clear/close the report card message
+bot.action('delete_this_invoice', async (ctx) => {
+    try {
+        await ctx.deleteMessage();
+    } catch (error) {
+        console.error("Failed to delete report message:", error);
+        await ctx.editMessageText('🗑️ របាយការណ៍ចាស់ត្រូវបានលុបចេញពីអេក្រង់។');
+    }
+    await ctx.answerCbQuery();
 });
 
 // Start Express server
