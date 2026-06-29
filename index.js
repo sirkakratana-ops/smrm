@@ -20,33 +20,13 @@ if (process.env.RENDER_EXTERNAL_URL) {
 }
 
 // --- TELEGRAM BOT LOGIC ---
-
-// Command: /start
-bot.command('start', (ctx) => {
-    ctx.reply('សូមស្វាគមន៍! សូមចែករំលែកលេខទូរស័ព្ទរបស់អ្នកដើម្បីពិនិត្យប្រវត្តិកុម្មង់។', 
-        Markup.keyboard([
-            Markup.button.contactRequest('📲 ចែករំលែកលេខទូរស័ព្ទ (Share Contact)')
-        ]).oneTime().resize()
-    );
-});
-
-// Handler: When user clicks "Share Contact"
 bot.on('contact', async (ctx) => {
     try {
-        //  NEW SMART CODE
-let phone = ctx.message.contact.phone_number;
+        let phone = ctx.message.contact.phone_number;
+        phone = phone.replace(/[^0-9+]/g, ''); 
+        if (!phone.startsWith('+')) phone = '+' + phone;
 
-// 1. Strip out all spaces, hyphens, or special characters
-phone = phone.replace(/[^0-9+]/g, ''); 
-
-// 2. If Telegram stripped the plus sign, add it back safely
-if (!phone.startsWith('+')) {
-    phone = '+' + phone;
-}
-
-        console.log("Searching database for phone number:", phone); 
-
-        // Fetch the customer from Supabase by phone
+        // 1. Fetch the customer
         const { data: customer, error: custError } = await supabase
             .from('customers')
             .select('id, name')
@@ -54,53 +34,105 @@ if (!phone.startsWith('+')) {
             .single();
 
         if (custError || !customer) {
-            console.log("Supabase Look-up failed or customer not found for:", phone);
-            return ctx.reply('❌ រកមិនឃើញលេខទូរស័ព្ទរបស់អ្នកក្នុងប្រព័ន្ធឡើយ។ សូមទាក់ទងមកហាងផ្ទាល់ដើម្បីចុះឈ្មោះ។');
+            return ctx.reply('❌ រកមិនឃើញលេខទូរស័ព្ទរបស់អ្នកក្នុងប្រព័ន្ធឡើយ។');
         }
 
-        // Fetch recent invoices for this customer
-        const { data: invoices, error: invError } = await supabase
-            .from('invoices')
+        // 2. Calculate the rolling 1-year dates
+        const endDate = new Date(); // Right now (e.g., 29 June 2026)
+        const startDate = new Date();
+        startDate.setFullYear(endDate.getFullYear() - 1); // Exactly 1 year ago (e.g., 29 June 2025)
+
+        // 3. Fetch all invoice items for this customer within the rolling year date range
+        const { data: items, error: itemError } = await supabase
+            .from('invoice_items')
             .select(`
-                id, 
-                invoice_date, 
-                total_amount, 
-                status,
-                invoice_items (product_name, quantity, unit_price)
+                quantity,
+                unit_price,
+                category,
+                invoices!inner(customer_id, invoice_date)
             `)
-            .eq('customer_id', customer.id)
-            .order('invoice_date', { ascending: false })
-            .limit(5);
+            .eq('invoices.customer_id', customer.id)
+            .gte('invoices.invoice_date', startDate.toISOString())
+            .lte('invoices.invoice_date', endDate.toISOString());
 
-        if (invError || !invoices || invoices.length === 0) {
-            return ctx.reply(`👋 ជម្រាបសួរ ${customer.name}! អ្នកមិនទាន់មានប្រវត្តិទិញទំនិញក្នុងប្រព័ន្ធនៅឡើយទេ។`);
+        if (itemError || !items || items.length === 0) {
+            return ctx.reply(`👋 ជម្រាបសួរ ${customer.name}! អ្នកមិនទាន់មានប្រវត្តិទិញទំនិញក្នុងរយៈពេល ១ ឆ្នាំចុងក្រោយនេះទេ។`);
         }
 
-        // Build the Khmer text invoice response string
-        let report = `🌾 *សូមជូនរបាយការណ៍*\n`;
-        report += `ឈ្មោះ: *${customer.name}*\n`;
-        report += `----------------------------------\n\n`;
+        // 4. Initialize category totals in Riel (៛)
+        let totals = {
+            'Granular Fertilizer': 0,
+            'Liquid Fertilizer': 0,
+            'Powder Fertilizer': 0,
+            'Pesticide': 0,
+            'Fungicide': 0,
+            'Herbicide': 0
+        };
 
-        invoices.forEach((inv) => {
-            const date = new Date(inv.invoice_date).toLocaleDateString('km-KH');
-            const statusKhmer = inv.status === 'Debt' ? 'ជំពាក់ (Debt) ⚠️' : 'ទូទាត់រួចរាល់ ✅';
-            
-            report += `📄 *វិក្កយបត្រ #: ${inv.id}* (${date})\n`;
-            report += `ស្ថានភាព: ${statusKhmer}\n`;
-            
-            inv.invoice_items.forEach((item, index) => {
-                report += `  ${index + 1}. ${item.product_name} x ${item.quantity} (តម្លៃដើម: ${Number(item.unit_price).toLocaleString()}៛)\n`;
-            });
-            
-            report += `💰 *សរុបរួម: ${Number(inv.total_amount).toLocaleString()} ៛*\n`;
-            report += `----------------------------------\n\n`;
+        // Sum up total Riel values grouped by category
+        items.forEach(item => {
+            const itemTotalRiel = Number(item.quantity) * Number(item.unit_price);
+            if (totals[item.category] !== undefined) {
+                totals[item.category] += itemTotalRiel;
+            }
         });
 
-        await ctx.reply(report, { parse_mode: 'Markdown' });
+        // 5. Compute Grand Total and Group Sub-totals in Riel
+        const totalFertilizerRiel = totals['Granular Fertilizer'] + totals['Liquid Fertilizer'] + totals['Powder Fertilizer'];
+        const totalMedicineRiel = totals['Pesticide'] + totals['Fungicide'] + totals['Herbicide'];
+        const grandTotalRiel = totalFertilizerRiel + totalMedicineRiel;
+
+        if (grandTotalRiel === 0) {
+            return ctx.reply(`👋 ជម្រាបសួរ ${customer.name}! មិនមានទិន្នន័យទិញទំនិញសរុបឡើយ។`);
+        }
+
+        // 6. Convert EVERYTHING to USD ($) using 1$ = 4000៛ exchange rate
+        const EXCHANGE_RATE = 4000;
+        const toUSD = (riel) => riel / EXCHANGE_RATE;
+
+        const granularUSD = toUSD(totals['Granular Fertilizer']);
+        const liquidUSD = toUSD(totals['Liquid Fertilizer']);
+        const powderUSD = toUSD(totals['Powder Fertilizer']);
+        const fertilizerSubUSD = toUSD(totalFertilizerRiel);
+
+        const herbicideUSD = toUSD(totals['Herbicide']);
+        const pesticideUSD = toUSD(totals['Pesticide']);
+        const fungicideUSD = toUSD(totals['Fungicide']);
+        const medicineSubUSD = toUSD(totalMedicineRiel);
+        
+        const grandTotalUSD = toUSD(grandTotalRiel);
+
+        // 7. Calculate Percentages based on Grand Total
+        const getPct = (usdValue) => ((usdValue / grandTotalUSD) * 100).toFixed(0);
+
+        // 8. Construct the clean Khmer Report Response String
+        let report = `🌾 *សូមជូនរបាយការណ៍ប្រចាំឆ្នាំ*\n`;
+        report += `ឈ្មោះ: *${customer.name}*\n`;
+        report += `គិតចាប់ពី: ${startDate.toLocaleDateString('km-KH')} ដល់ ${endDate.toLocaleDateString('km-KH')}\n`;
+        report += `----------------------------------\n`;
+        report += `ជីគ្រាប់ (Granular): $${granularUSD.toLocaleString()}/$ (${getPct(granularUSD)}%)\n`;
+        report += `ជីទឹក (Liquid): $${liquidUSD.toLocaleString()}/$ (${getPct(liquidUSD)}%)\n`;
+        report += `ជីម្សៅ (Powder): $${powderUSD.toLocaleString()}/$ (${getPct(powderUSD)}%)\n\n`;
+        report += `*សរុបជី (Subtotal): $${fertilizerSubUSD.toLocaleString()}/$ (${getPct(fertilizerSubUSD)}%)*\n`;
+        report += `----------------------------------\n`;
+        report += `ថ្នាំស្មៅ (Herbicide): $${herbicideUSD.toLocaleString()}/$ (${getPct(herbicideUSD)}%)\n`;
+        report += `ថ្នាំសត្វល្អិត (Pesticide): $${pesticidUSD.toLocaleString()}/$ (${getPct(pesticideUSD)}%)\n`;
+        report += `ថ្នាំជំងឺ (Fungicide): $${fungicideUSD.toLocaleString()}/$ (${getPct(fungicideUSD)}%)\n\n`;
+        report += `*សរុបថ្នាំ (Subtotal): $${medicineSubUSD.toLocaleString()}/$ (${getPct(medicineSubUSD)}%)*\n`;
+        report += `----------------------------------\n`;
+        report += `💰 *សរុបរួម (Grand Total): $${grandTotalUSD.toLocaleString()}/$*`;
+
+        // Send the complete summary with a close button
+        await ctx.reply(report, { 
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback('❌ បិទរបាយការណ៍ (Close)', 'delete_this_invoice')]
+            ])
+        });
 
     } catch (err) {
-        console.error("Critical Runtime Error:", err);
-        ctx.reply('❌ មានបញ្ហាបច្គេកទេសក្នុងការទាញយកទិន្នន័យ។ សូមព្យាយាមម្តងទៀតនៅពេលក្រោយ។');
+        console.error(err);
+        ctx.reply('❌ មានបញ្ហាបច្ចេកទេសក្នុងការគណនារបាយការណ៍។');
     }
 });
 
