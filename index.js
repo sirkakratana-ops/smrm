@@ -18,8 +18,25 @@ if (process.env.RENDER_EXTERNAL_URL) {
     app.use(bot.webhookCallback(WEBHOOK_PATH));
 }
 
-// Temporary in-memory state tracker to keep track of user context sessions
+// Memory session state tracker
 const userSessions = new Map();
+
+// Helper function to validate and parse DD-MM-YYYY format safely
+function parseDateString(dateStr) {
+    const match = dateStr.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+    if (!match) return null;
+    
+    const day = parseInt(match[1], 10);
+    const month = parseInt(match[2], 10) - 1; // JS Months are 0-11
+    const year = parseInt(match[3], 10);
+    
+    const date = new Date(year, month, day);
+    // Double check it's a real date (prevents things like 31-02-2026)
+    if (date.getFullYear() === year && date.getMonth() === month && date.getDate() === day) {
+        return date;
+    }
+    return null;
+}
 
 // --- TELEGRAM BOT LOGIC ---
 
@@ -32,6 +49,23 @@ bot.command('start', (ctx) => {
     );
 });
 
+// Main selection menu view component
+async function sendMainMenu(ctx, customerName, customerId) {
+    const text = `👋 ជម្រាបសួរ ${customerName}!\nសូមជ្រើសរើសចន្លោះកាលបរិច្ឆេទដែលអ្នកចង់ពិនិត្យរបាយការណ៍៖`;
+    const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('📅 ប្រវត្តិ ៣ ខែចុងក្រោយ', 'range_3_months')],
+        [Markup.button.callback('📅 ប្រវត្តិ ៦ ខែចុងក្រោយ', 'range_6_months')],
+        [Markup.button.callback('🗓️ របាយការណ៍ប្រចាំឆ្នាំ (1 Year)', 'range_1_year')],
+        [Markup.button.callback('✏️ ជ្រើសរើសថ្ងៃខែដោយខ្លួនឯង (Custom Range)', 'range_custom')]
+    ]);
+
+    if (ctx.callbackQuery) {
+        await ctx.editMessageText(text, keyboard);
+    } else {
+        await ctx.reply(text, keyboard);
+    }
+}
+
 // Handler: When user clicks "Share Contact"
 bot.on('contact', async (ctx) => {
     try {
@@ -39,10 +73,8 @@ bot.on('contact', async (ctx) => {
         phone = phone.replace(/[^0-9+]/g, ''); 
         if (!phone.startsWith('+')) phone = '+' + phone;
 
-        // Extract Customer ID (Removes "+855" or "855")
         const customerId = phone.replace(/^\+?855/, ''); 
 
-        // Verify Customer exists
         const { data: customer, error: custError } = await supabase
             .from('customers')
             .select('id, name')
@@ -53,17 +85,14 @@ bot.on('contact', async (ctx) => {
             return ctx.reply('❌ រកមិនឃើញប្រវត្តិរបស់អ្នកក្នុងប្រព័ន្ធឡើយ។');
         }
 
-        // Save session data so the button handlers know who is querying
-        userSessions.set(ctx.from.id, { customerId: customer.id, customerName: customer.name });
+        // Initialize state tracker fields
+        userSessions.set(ctx.from.id, { 
+            customerId: customer.id, 
+            customerName: customer.name,
+            step: 'idle' 
+        });
 
-        // Prompt user to select their desired date timeframe filter
-        await ctx.reply(`👋 ជម្រាបសួរ ${customer.name}!\nសូមជ្រើសរើសចន្លោះកាលបរិច្ឆេទដែលអ្នកចង់ពិនិត្យរបាយការណ៍៖`, 
-            Markup.inlineKeyboard([
-                [Markup.button.callback('📅 ប្រវត្តិ ៣ ខែចុងក្រោយ (Last 3 Months)', 'range_3_months')],
-                [Markup.button.callback('📅 ប្រវត្តិ ៦ ខែចុងក្រោយ (Last 6 Months)', 'range_6_months')],
-                [Markup.button.callback('🗓️ របាយការណ៍ប្រចាំឆ្នាំ (Full 1 Year)', 'range_1_year')]
-            ])
-        );
+        await sendMainMenu(ctx, customer.name, customer.id);
 
     } catch (err) {
         console.error(err);
@@ -71,18 +100,14 @@ bot.on('contact', async (ctx) => {
     }
 });
 
-// --- DYNAMIC REUSABLE REPORT GENERATION FUNCTION ---
-async function generateReport(ctx, monthsBack) {
+// --- DYNAMIC CORE ENGINE ---
+async function generateReport(ctx, startDate, endDate) {
     const session = userSessions.get(ctx.from.id);
     if (!session) {
         return ctx.reply('⚠️ សេសសិនរបស់អ្នកបានផុតកំណត់។ សូមចែករំលែកលេខទូរស័ព្ទម្តងទៀត (/start)។');
     }
 
     try {
-        const endDate = new Date();
-        const startDate = new Date();
-        startDate.setMonth(endDate.getMonth() - monthsBack);
-
         // Fetch invoice items matching timeframe
         const { data: items, error: itemError } = await supabase
             .from('invoice_items')
@@ -95,9 +120,14 @@ async function generateReport(ctx, monthsBack) {
             .lte('invoices.invoice_date', endDate.toISOString());
 
         if (itemError || !items || items.length === 0) {
-            return ctx.editMessageText(`👋 ជម្រាបសួរ ${session.customerName}!\nមិនមានប្រវត្តិទិញទំនិញក្នុងចន្លោះកាលបរិច្ឆេទនេះឡើយ (${monthsBack} ខែចុងក្រោយ)។`,
-                Markup.inlineKeyboard([[Markup.button.callback('⬅️ ត្រឡប់ក្រោយ (Go Back)', 'go_back_menu')]])
-            );
+            const emptyMsg = `👋 ជម្រាបសួរ ${session.customerName}!\nមិនមានប្រវត្តិទិញទំនិញក្នុងចន្លោះកាលបរិច្ឆេទនេះឡើយ៖\n📍 ពី ${startDate.toLocaleDateString('km-KH')} ដល់ ${endDate.toLocaleDateString('km-KH')}`;
+            const emptyKb = Markup.inlineKeyboard([[Markup.button.callback('⬅️ ត្រឡប់ក្រោយ (Go Back)', 'go_back_menu')]]);
+            
+            if (ctx.callbackQuery) {
+                return ctx.editMessageText(emptyMsg, emptyKb);
+            } else {
+                return ctx.reply(emptyMsg, emptyKb);
+            }
         }
 
         let totals = { 'Granular Fertilizer': 0, 'Liquid Fertilizer': 0, 'Powder Fertilizer': 0, 'Pesticide': 0, 'Fungicide': 0, 'Herbicide': 0 };
@@ -113,12 +143,10 @@ async function generateReport(ctx, monthsBack) {
 
         const EXCHANGE_RATE = 4000;
         const toUSD = (riel) => riel / EXCHANGE_RATE;
-
         const grandTotalUSD = toUSD(grandTotalRiel);
         const getPct = (usdValue) => grandTotalUSD > 0 ? ((usdValue / grandTotalUSD) * 100).toFixed(0) : 0;
 
-        // Pushes content up to clear contact display illusion
-        let report = `\n`.repeat(25);
+        let report = `\n`.repeat(25); // Pushes content up to clear display interface
         report += `🌾 *សូមជូនរបាយការណ៍ទិន្នន័យទិញទំនិញ*\n`;
         report += `ឈ្មោះ: *${session.customerName}* (ID: ${session.customerId})\n`;
         report += `ចន្លោះកាលបរិច្ឆេទ: ${startDate.toLocaleDateString('km-KH')} ដល់ ${endDate.toLocaleDateString('km-KH')}\n`;
@@ -135,13 +163,16 @@ async function generateReport(ctx, monthsBack) {
         report += `----------------------------------\n`;
         report += `💰 *សរុបរួម (Grand Total): $${grandTotalUSD.toLocaleString()}*`;
 
-        await ctx.editMessageText(report, {
-            parse_mode: 'Markdown',
-            ...Markup.inlineKeyboard([
-                [Markup.button.callback('⬅️ ផ្លាស់ប្តូរថ្ងៃខែ (Change Date)', 'go_back_menu')],
-                [Markup.button.callback('❌ បិទចោល (Close)', 'close_report')]
-            ])
-        });
+        const finalKb = Markup.inlineKeyboard([
+            [Markup.button.callback('⬅️ ផ្លាស់ប្តូរថ្ងៃខែ (Change Date)', 'go_back_menu')],
+            [Markup.button.callback('❌ បិទចោល (Close)', 'close_report')]
+        ]);
+
+        if (ctx.callbackQuery) {
+            await ctx.editMessageText(report, { parse_mode: 'Markdown', ...finalKb });
+        } else {
+            await ctx.reply(report, { parse_mode: 'Markdown', ...finalKb });
+        }
 
     } catch (err) {
         console.error(err);
@@ -150,26 +181,78 @@ async function generateReport(ctx, monthsBack) {
 }
 
 // --- BUTTON CALLBACK ACTIONS ---
-bot.action('range_3_months', (ctx) => generateReport(ctx, 3));
-bot.action('range_6_months', (ctx) => generateReport(ctx, 6));
-bot.action('range_1_year', (ctx) => generateReport(ctx, 12));
+bot.action('range_3_months', (ctx) => {
+    const end = new Date(); const start = new Date(); start.setMonth(end.getMonth() - 3);
+    generateReport(ctx, start, end);
+});
+
+bot.action('range_6_months', (ctx) => {
+    const end = new Date(); const start = new Date(); start.setMonth(end.getMonth() - 6);
+    generateReport(ctx, start, end);
+});
+
+bot.action('range_1_year', (ctx) => {
+    const end = new Date(); const start = new Date(); start.setFullYear(end.getFullYear() - 1);
+    generateReport(ctx, start, end);
+});
+
+bot.action('range_custom', async (ctx) => {
+    const session = userSessions.get(ctx.from.id);
+    if (!session) return ctx.reply('Please run /start first.');
+    
+    session.step = 'awaiting_start_date';
+    await ctx.editMessageText('📅 សូមវាយបញ្ចូល *ថ្ងៃខែឆ្នាំចាប់ផ្តើម* តាមទម្រង់គំរូខាងក្រោម៖\n\n👉 ទម្រង់គំរូ៖ `DD-MM-YYYY` (ឧទាហរណ៍៖ `01-01-2026`)', { parse_mode: 'Markdown' });
+    await ctx.answerCbQuery();
+});
 
 bot.action('go_back_menu', async (ctx) => {
     const session = userSessions.get(ctx.from.id);
-    const name = session ? session.customerName : 'អតិថិជន';
-    await ctx.editMessageText(`👋 ជម្រាបសួរ ${name}!\nសូមជ្រើសរើសចន្លោះកាលបរិច្ឆេទដែលអ្នកចង់ពិនិត្យរបាយការណ៍ឡើងវិញ៖`, 
-        Markup.inlineKeyboard([
-            [Markup.button.callback('📅 ប្រវត្តិ ៣ ខែចុងក្រោយ (Last 3 Months)', 'range_3_months')],
-            [Markup.button.callback('📅 ប្រវត្តិ ៦ ខែចុងក្រោយ (Last 6 Months)', 'range_6_months')],
-            [Markup.button.callback('🗓️ របាយការណ៍ប្រចាំឆ្នាំ (Full 1 Year)', 'range_1_year')]
-        ])
-    );
+    if (session) session.step = 'idle';
+    await sendMainMenu(ctx, session ? session.customerName : 'អតិថិជន', session ? session.customerId : '');
     await ctx.answerCbQuery();
 });
 
 bot.action('close_report', async (ctx) => {
-    try { await ctx.deleteMessage(); } catch (e) { await ctx.editMessageText('🗑️ របាយការណ៍ត្រូវបានលុបចេញពីអេក្រង់។'); }
+    try { await ctx.deleteMessage(); } catch (e) { await ctx.editMessageText('🗑️ របាយការណ៍ត្រូវបានលុប។'); }
     await ctx.answerCbQuery();
+});
+
+// --- TEXT CHAT WIZARD FLOW INTERCEPTOR ---
+bot.on('text', async (ctx) => {
+    const session = userSessions.get(ctx.from.id);
+    if (!session || session.step === 'idle') return; // Ignore regular conversational chatting text
+
+    const textInput = ctx.message.text.trim();
+
+    if (session.step === 'awaiting_start_date') {
+        const parsedStart = parseDateString(textInput);
+        if (!parsedStart) {
+            return ctx.reply('❌ ទម្រង់ថ្ងៃខែមិនត្រឹមត្រូវឡើយ។ សូមព្យាយាមម្តងទៀតដោយវាយបញ្ចូលតាមទម្រង់ `DD-MM-YYYY` (ឧទាហរណ៍៖ `01-01-2026`)៖');
+        }
+        session.customStartDate = parsedStart;
+        session.step = 'awaiting_end_date';
+        return ctx.reply(`✅ ទទួលបានថ្ងៃចាប់ផ្តើម៖ ${parsedStart.toLocaleDateString('km-KH')}\n\n📅 បន្ទាប់មកទៀត សូមវាយបញ្ចូល *ថ្ងៃខែឆ្នាំបញ្ចប់* (\`DD-MM-YYYY\`)៖`, { parse_mode: 'Markdown' });
+    }
+
+    if (session.step === 'awaiting_end_date') {
+        const parsedEnd = parseDateString(textInput);
+        if (!parsedEnd) {
+            return ctx.reply('❌ ទម្រង់ថ្ងៃខែមិនត្រឹមត្រូវឡើយ។ សូមព្យាយាមម្តងទៀតដោយវាយបញ្ចូលតាមទម្រង់ `DD-MM-YYYY` (ឧទាហរណ៍៖ `30-06-2026`)៖');
+        }
+        
+        if (parsedEnd < session.customStartDate) {
+            return ctx.reply('❌ ថ្ងៃខែបញ្ចប់មិនអាចតូចជាងថ្ងៃខែចាប់ផ្តើមបានឡើយ។ សូមវាយបញ្ចូលថ្ងៃខែបញ្ចប់ម្តងទៀត៖');
+        }
+
+        // Set the end time parameters to the very end of that chosen calendar day (11:59:59 PM)
+        parsedEnd.setHours(23, 59, 59, 999);
+
+        // Reset tracking wizard step state back to normal
+        session.step = 'idle';
+
+        ctx.reply('⏳ កំពុងទាញយកទិន្នន័យ និងគណនារបាយការណ៍ សូមរង់ចាំ...');
+        generateReport(ctx, session.customStartDate, parsedEnd);
+    }
 });
 
 // Start Express server
