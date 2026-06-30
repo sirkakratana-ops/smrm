@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="km">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ស្រែមាន - ប្រព័ន្ធបញ្ចូលវិក្កយបត្រ (Admin)</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body { bg-color: #f8f9fa; }
+        .header-bg { background-color: #198754; color: white; }
+        .grand-total-box { background-color: #e8f5e9; color: #1b5e20; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div class="container my-5" style="max-w: 900px;">
+        <div class="header-bg p-4 rounded-top shadow-sm">
+            <h1 class="h3 mb-1">🌾 ហាងកសិកម្ម ស្រែមាន - Admin Dashboard</h1>
+            <p class="mb-0 opacity-75 small">ប្រព័ន្ធបញ្ចូលទិន្នន័យវិក្កយបត្រអតិថិជនទៅកាន់ Database</p>
+        </div>
+
+        <div class="bg-white p-4 rounded-bottom shadow-sm border border-top-0">
+            <form id="invoiceForm" onsubmit="submitInvoice(event)">
+                
+                <div class="row g-3 p-3 mb-4 bg-light rounded border">
+                    <div class="col-md-4">
+                        <label class="form-label font-weight-bold small">លេខវិក្កយបត្រ (Invoice ID)</label>
+                        <input type="text" id="invoiceId" placeholder="ឧទាហរណ៍៖ 20260630" required class="form-control">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label font-weight-bold small">អតិថិជន (Select Customer)</label>
+                        <select id="customerSelect" required class="form-select">
+                            <option value="">-- ជ្រើសរើសអតិថិជន --</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label font-weight-bold small">ស្ថានភាពទូទាត់ (Status)</label>
+                        <select id="invoiceStatus" class="form-select">
+                            <option value="Paid">ទូទាត់រួចរាល់ (Paid) ✅</option>
+                            <option value="Debt">ជំពាក់ (Debt) ⚠️</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="mb-4">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="mb-0 text-secondary">📦 មុខទំនិញក្នុងវិក្កយបត្រ</h5>
+                        <button type="button" onclick="addItemRow()" class="btn btn-outline-success btn-sm">+ បន្ថែមមុខទំនិញ</button>
+                    </div>
+                    
+                    <div id="itemsContainer" class="d-flex flex-column gap-3">
+                        </div>
+                </div>
+
+                <hr class="text-muted my-4">
+
+                <div class="d-flex flex-column flex-md-row justify-content-between align-items-center gap-3 p-3 rounded grand-total-box">
+                    <div class="fs-5">
+                        ទឹកប្រាក់សរុបរួម: <span id="grandTotalDisplay">0</span> ៛
+                    </div>
+                    <button type="submit" class="btn btn-success btn-lg px-4 shadow-sm">
+                        💾 រក្សាទុកវិក្កយបត្រ (Save Invoice)
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // 1. Injected your exact Supabase credentials 
+        const SUPABASE_URL = "https://hllsxqjyyoewkbgmwizs.supabase.co"; 
+        const SUPABASE_KEY = "sb_publishable_KZbdTXvOcVfnsd9kzEgzAQ_u4T8h2Bt"; 
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        let productCatalog = [];
+
+        // 2. Initialize application data on page load
+        document.addEventListener("DOMContentLoaded", async () => {
+            await fetchCustomers();
+            await fetchProducts();
+            addItemRow(); // Start with one empty item row automatically
+        });
+
+        // Pull active list of customers to display in select menu
+        async function fetchCustomers() {
+            const { data, error } = await supabaseClient.from('customers').select('id, name').order('name');
+            if (error) return alert("Error loading customers: " + error.message);
+            
+            const select = document.getElementById("customerSelect");
+            data.forEach(c => {
+                const opt = document.createElement("option");
+                opt.value = c.id;
+                opt.textContent = `${c.name} (ID: ${c.id})`;
+                select.appendChild(opt);
+            });
+        }
+
+        // Pull master products to populate product select lines and map costs
+        async function fetchProducts() {
+            const { data, error } = await supabaseClient.from('products').select('*').order('product_name');
+            if (error) return alert("Error loading products: " + error.message);
+            productCatalog = data;
+        }
+
+        // Add a brand new interactive dynamic item line entry to UI
+        function addItemRow() {
+            const container = document.getElementById("itemsContainer");
+            const rowId = 'row_' + Date.now() + Math.random().toString(36).substr(2, 4);
+
+            let optionsHtml = productCatalog.map(p => `<option value="${p.id}">${p.product_name}</option>`).join('');
+
+            const rowTemplate = `
+                <div id="${rowId}" class="item-row row g-2 align-items-center bg-white p-2 rounded border shadow-sm mx-0">
+                    <div class="col-12 col-md-5">
+                        <select required onchange="onProductChange('${rowId}', this.value)" class="product-select form-select form-select-sm">
+                            <option value="">-- ជ្រើសរើសទំនិញ --</option>
+                            ${optionsHtml}
+                        </select>
+                    </div>
+                    <div class="col-4 col-md-2">
+                        <input type="number" min="1" value="1" required oninput="calculateGrandTotal()" class="quantity-input form-control form-control-sm text-center" placeholder="ចំនួន">
+                    </div>
+                    <div class="col-5 col-md-3">
+                        <input type="number" min="0" step="100" required oninput="calculateGrandTotal()" class="price-input form-control form-control-sm" placeholder="តម្លៃរាយ (៛)">
+                    </div>
+                    <div class="col-3 col-md-2 text-center">
+                        <button type="button" onclick="removeItemRow('${rowId}')" class="btn btn-link btn-sm text-danger text-decoration-none p-0 w-full">លុប 🗑️</button>
+                    </div>
+                </div>
+            `;
+            container.insertAdjacentHTML('beforeend', rowTemplate);
+        }
+
+        function removeItemRow(id) {
+            const rows = document.querySelectorAll('.item-row');
+            if (rows.length > 1) {
+                document.getElementById(id).remove();
+                calculateGrandTotal();
+            } else {
+                alert("វិក្កយបត្រត្រូវមានទំនិញយ៉ាងហោចណាស់ ១ មុខ!");
+            }
+        }
+
+        // Auto-fill default unit price when product is selected
+        function onProductChange(rowId, productId) {
+            const row = document.getElementById(rowId);
+            const selectedProduct = productCatalog.find(p => p.id == productId);
+            if (selectedProduct) {
+                row.querySelector('.price-input').value = selectedProduct.default_price_riel;
+            } else {
+                row.querySelector('.price-input').value = '';
+            }
+            calculateGrandTotal();
+        }
+
+        // Dynamically compute grand total at bottom based on form input values
+        function calculateGrandTotal() {
+            let total = 0;
+            document.querySelectorAll('.item-row').forEach(row => {
+                const qty = Number(row.querySelector('.quantity-input').value) || 0;
+                const price = Number(row.querySelector('.price-input').value) || 0;
+                total += (qty * price);
+            });
+            document.getElementById("grandTotalDisplay").textContent = total.toLocaleString();
+            return total;
+        }
+
+        // 3. TRANSACTION TRANSACTIONAL BLOCK SUBMISSION TO SUPABASE
+        async function submitInvoice(event) {
+            event.preventDefault();
+
+            const invoiceId = document.getElementById("invoiceId").value.trim();
+            const customerId = document.getElementById("customerSelect").value;
+            const status = document.getElementById("invoiceStatus").value;
+            const grandTotal = calculateGrandTotal();
+
+            const invoicePayload = {
+                id: invoiceId,
+                customer_id: customerId,
+                invoice_date: new Date().toISOString(),
+                total_amount: grandTotal,
+                status: status
+            };
+
+            const itemsRows = [];
+            let itemValidationError = false;
+
+            document.querySelectorAll('.item-row').forEach(row => {
+                const productId = row.querySelector('.product-select').value;
+                const qty = Number(row.querySelector('.quantity-input').value);
+                const price = Number(row.querySelector('.price-input').value);
+                
+                const matchedProd = productCatalog.find(p => p.id == productId);
+                if (!matchedProd) { itemValidationError = true; return; }
+
+                itemsRows.push({
+                    invoice_id: invoiceId,
+                    product_id: productId,
+                    product_name: matchedProd.product_name,
+                    category: matchedProd.category,
+                    quantity: qty,
+                    unit_price: price
+                });
+            });
+
+            if (itemValidationError) return alert("សូមជ្រើសរើសផលិតផលអោយបានត្រឹមត្រូវ!");
+
+            try {
+                // A: Push master row header to 'invoices' table
+                const { error: invError } = await supabaseClient.from('invoices').insert([invoicePayload]);
+                if (invError) throw invError;
+
+                // B: Push line row arrays block to 'invoice_items' table
+                const { error: itemsError } = await supabaseClient.from('invoice_items').insert(itemsRows);
+                if (itemsError) throw itemsError;
+
+                alert("✅ វិក្កយបត្រត្រូវបានរក្សាទុកក្នុង Database ដោយជោគជ័យ!");
+                document.getElementById("invoiceForm").reset();
+                document.getElementById("itemsContainer").innerHTML = '';
+                addItemRow();
+                calculateGrandTotal();
+
+            } catch (err) {
+                console.error(err);
+                alert("❌ បរាជ័យក្នុងការរក្សាទុក៖ " + err.message);
+            }
+        }
+    </script>
+</body>
+</html>
