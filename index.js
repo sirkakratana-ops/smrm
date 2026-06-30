@@ -2,28 +2,30 @@ const { Telegraf, Markup } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
 const express = require('express');
 
-// 1. Initialize Supabase Client using Environment Variables
+// 1. Initialize Supabase Client
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
 // 2. Initialize Telegram Bot
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 
-// 3. Set up Express Server for Render Webhook
+// 3. Express Setup for Webhooks
 const app = express();
 const PORT = process.env.PORT || 3000;
 const WEBHOOK_PATH = `/bot-${process.env.TELEGRAM_BOT_TOKEN}`;
 
-// Tell Telegram to send updates to your Render Webhook URL
 if (process.env.RENDER_EXTERNAL_URL) {
     bot.telegram.setWebhook(`${process.env.RENDER_EXTERNAL_URL}${WEBHOOK_PATH}`);
     app.use(bot.webhookCallback(WEBHOOK_PATH));
 }
 
+// Temporary in-memory state tracker to keep track of user context sessions
+const userSessions = new Map();
+
 // --- TELEGRAM BOT LOGIC ---
 
-// Command: /start (Restored so users have a button to click)
+// Command: /start
 bot.command('start', (ctx) => {
-    ctx.reply('សូមស្វាគមន៍មកកាន់ហាងកសិកម្ម ស្រែមាន! សូមចែករំលែកលេខទូរស័ព្ទរបស់អ្នកដើម្បីពិនិត្យប្រវត្តិកុម្មង់។', 
+    ctx.reply('សូមស្វាគមន៍មកកាន់ហាងកសិកម្ម ស្រែមាន! សូមចែករំលែកលេខទូរស័ព្ទរបស់អ្នកដើម្បីពិនិត្យរបាយការណ៍។', 
         Markup.keyboard([
             Markup.button.contactRequest('📲 ចែករំលែកលេខទូរស័ព្ទ (Share Contact)')
         ]).oneTime().resize()
@@ -35,131 +37,138 @@ bot.on('contact', async (ctx) => {
     try {
         let phone = ctx.message.contact.phone_number;
         phone = phone.replace(/[^0-9+]/g, ''); 
-        
-        if (!phone.startsWith('+')) {
-            phone = '+' + phone;
-        }
+        if (!phone.startsWith('+')) phone = '+' + phone;
 
-        console.log("👉 Executing dynamic 1-year report lookup for phone:", phone);
+        // Extract Customer ID (Removes "+855" or "855")
+        const customerId = phone.replace(/^\+?855/, ''); 
 
-        // 1. Fetch the customer
+        // Verify Customer exists
         const { data: customer, error: custError } = await supabase
             .from('customers')
             .select('id, name')
-            .eq('phone', phone)
+            .eq('id', customerId)
             .single();
 
         if (custError || !customer) {
-            return ctx.reply('❌ រកមិនឃើញលេខទូរស័ព្ទរបស់អ្នកក្នុងប្រព័ន្ធឡើយ។');
+            return ctx.reply('❌ រកមិនឃើញប្រវត្តិរបស់អ្នកក្នុងប្រព័ន្ធឡើយ។');
         }
 
-        // 2. Calculate the rolling 1-year dates
-        const endDate = new Date(); 
-        const startDate = new Date();
-        startDate.setFullYear(endDate.getFullYear() - 1); 
+        // Save session data so the button handlers know who is querying
+        userSessions.set(ctx.from.id, { customerId: customer.id, customerName: customer.name });
 
-        // 3. Fetch all invoice items for this customer within the rolling year date range
+        // Prompt user to select their desired date timeframe filter
+        await ctx.reply(`👋 ជម្រាបសួរ ${customer.name}!\nសូមជ្រើសរើសចន្លោះកាលបរិច្ឆេទដែលអ្នកចង់ពិនិត្យរបាយការណ៍៖`, 
+            Markup.inlineKeyboard([
+                [Markup.button.callback('📅 ប្រវត្តិ ៣ ខែចុងក្រោយ (Last 3 Months)', 'range_3_months')],
+                [Markup.button.callback('📅 ប្រវត្តិ ៦ ខែចុងក្រោយ (Last 6 Months)', 'range_6_months')],
+                [Markup.button.callback('🗓️ របាយការណ៍ប្រចាំឆ្នាំ (Full 1 Year)', 'range_1_year')]
+            ])
+        );
+
+    } catch (err) {
+        console.error(err);
+        ctx.reply('❌ មានបញ្ហាបច្ចេកទេសក្នុងការតភ្ជាប់។');
+    }
+});
+
+// --- DYNAMIC REUSABLE REPORT GENERATION FUNCTION ---
+async function generateReport(ctx, monthsBack) {
+    const session = userSessions.get(ctx.from.id);
+    if (!session) {
+        return ctx.reply('⚠️ សេសសិនរបស់អ្នកបានផុតកំណត់។ សូមចែករំលែកលេខទូរស័ព្ទម្តងទៀត (/start)។');
+    }
+
+    try {
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setMonth(endDate.getMonth() - monthsBack);
+
+        // Fetch invoice items matching timeframe
         const { data: items, error: itemError } = await supabase
             .from('invoice_items')
             .select(`
-                quantity,
-                unit_price,
-                category,
+                quantity, unit_price, category,
                 invoices!inner(customer_id, invoice_date)
             `)
-            .eq('invoices.customer_id', customer.id)
+            .eq('invoices.customer_id', session.customerId)
             .gte('invoices.invoice_date', startDate.toISOString())
             .lte('invoices.invoice_date', endDate.toISOString());
 
         if (itemError || !items || items.length === 0) {
-            return ctx.reply(`👋 ជម្រាបសួរ ${customer.name}! អ្នកមិនទាន់មានប្រវត្តិទិញទំនិញក្នុងរយៈពេល ១ ឆ្នាំចុងក្រោយនេះទេ។`);
+            return ctx.editMessageText(`👋 ជម្រាបសួរ ${session.customerName}!\nមិនមានប្រវត្តិទិញទំនិញក្នុងចន្លោះកាលបរិច្ឆេទនេះឡើយ (${monthsBack} ខែចុងក្រោយ)។`,
+                Markup.inlineKeyboard([[Markup.button.callback('⬅️ ត្រឡប់ក្រោយ (Go Back)', 'go_back_menu')]])
+            );
         }
 
-        // 4. Initialize category totals in Riel (៛)
-        let totals = {
-            'Granular Fertilizer': 0,
-            'Liquid Fertilizer': 0,
-            'Powder Fertilizer': 0,
-            'Pesticide': 0,
-            'Fungicide': 0,
-            'Herbicide': 0
-        };
+        let totals = { 'Granular Fertilizer': 0, 'Liquid Fertilizer': 0, 'Powder Fertilizer': 0, 'Pesticide': 0, 'Fungicide': 0, 'Herbicide': 0 };
 
-        // Sum up total Riel values grouped by category
         items.forEach(item => {
             const itemTotalRiel = Number(item.quantity) * Number(item.unit_price);
-            if (totals[item.category] !== undefined) {
-                totals[item.category] += itemTotalRiel;
-            }
+            if (totals[item.category] !== undefined) totals[item.category] += itemTotalRiel;
         });
 
-        // 5. Compute Grand Total and Group Sub-totals in Riel
         const totalFertilizerRiel = totals['Granular Fertilizer'] + totals['Liquid Fertilizer'] + totals['Powder Fertilizer'];
         const totalMedicineRiel = totals['Pesticide'] + totals['Fungicide'] + totals['Herbicide'];
         const grandTotalRiel = totalFertilizerRiel + totalMedicineRiel;
 
-        if (grandTotalRiel === 0) {
-            return ctx.reply(`👋 ជម្រាបសួរ ${customer.name}! មិនមានទិន្នន័យទិញទំនិញសរុបឡើយ។`);
-        }
-
-        // 6. Convert EVERYTHING to USD ($) using 1$ = 4000៛ exchange rate
         const EXCHANGE_RATE = 4000;
         const toUSD = (riel) => riel / EXCHANGE_RATE;
 
-        const granularUSD = toUSD(totals['Granular Fertilizer']);
-        const liquidUSD = toUSD(totals['Liquid Fertilizer']);
-        const powderUSD = toUSD(totals['Powder Fertilizer']);
-        const fertilizerSubUSD = toUSD(totalFertilizerRiel);
-
-        const herbicideUSD = toUSD(totals['Herbicide']);
-        const pesticideUSD = toUSD(totals['Pesticide']); // Fixed spelling typo here
-        const fungicideUSD = toUSD(totals['Fungicide']);
-        const medicineSubUSD = toUSD(totalMedicineRiel);
-        
         const grandTotalUSD = toUSD(grandTotalRiel);
+        const getPct = (usdValue) => grandTotalUSD > 0 ? ((usdValue / grandTotalUSD) * 100).toFixed(0) : 0;
 
-        // 7. Calculate Percentages based on Grand Total
-        const getPct = (usdValue) => ((usdValue / grandTotalUSD) * 100).toFixed(0);
+        // Pushes content up to clear contact display illusion
+        let report = `\n`.repeat(25);
+        report += `🌾 *សូមជូនរបាយការណ៍ទិន្នន័យទិញទំនិញ*\n`;
+        report += `ឈ្មោះ: *${session.customerName}* (ID: ${session.customerId})\n`;
+        report += `ចន្លោះកាលបរិច្ឆេទ: ${startDate.toLocaleDateString('km-KH')} ដល់ ${endDate.toLocaleDateString('km-KH')}\n`;
+        report += `----------------------------------\n`;
+        report += `ជីគ្រាប់ (Granular): $${toUSD(totals['Granular Fertilizer']).toLocaleString()} (${getPct(toUSD(totals['Granular Fertilizer']))}%)\n`;
+        report += `ជីទឹក (Liquid): $${toUSD(totals['Liquid Fertilizer']).toLocaleString()} (${getPct(toUSD(totals['Liquid Fertilizer']))}%)\n`;
+        report += `ជីម្សៅ (Powder): $${toUSD(totals['Powder Fertilizer']).toLocaleString()} (${getPct(toUSD(totals['Powder Fertilizer']))}%)\n\n`;
+        report += `*សរុបជី (Subtotal): $${toUSD(totalFertilizerRiel).toLocaleString()} (${getPct(toUSD(totalFertilizerRiel))}%)*\n`;
+        report += `----------------------------------\n`;
+        report += `ថ្នាំស្មៅ (Herbicide): $${toUSD(totals['Herbicide']).toLocaleString()} (${getPct(toUSD(totals['Herbicide']))}%)\n`;
+        report += `ថ្នាំសត្វល្អិត (Pesticide): $${toUSD(totals['Pesticide']).toLocaleString()} (${getPct(toUSD(totals['Pesticide']))}%)\n`;
+        report += `ថ្នាំជំងឺ (Fungicide): $${toUSD(totals['Fungicide']).toLocaleString()} (${getPct(toUSD(totals['Fungicide']))}%)\n\n`;
+        report += `*សរុបថ្នាំ (Subtotal): $${toUSD(totalMedicineRiel).toLocaleString()} (${getPct(toUSD(totalMedicineRiel))}%)*\n`;
+        report += `----------------------------------\n`;
+        report += `💰 *សរុបរួម (Grand Total): $${grandTotalUSD.toLocaleString()}*`;
 
-        // 8. Construct the clean Khmer Report Response String
-        let report = `🌾 *សូមជូនរបាយការណ៍ប្រចាំឆ្នាំ*\n`;
-        report += `ឈ្មោះ: *${customer.name}*\n`;
-        report += `📅: ${startDate.toLocaleDateString('km-KH')} ដល់ ${endDate.toLocaleDateString('km-KH')}\n`;
-        report += `-----------------------------\n`;
-        report += `ជីគ្រាប់ Granular: $${granularUSD.toLocaleString()} (${getPct(granularUSD)}%)\n`;
-        report += `ជីទឹក Liquid: $${liquidUSD.toLocaleString()} (${getPct(liquidUSD)}%)\n`;
-        report += `ជីម្សៅ Powder: $${powderUSD.toLocaleString()} (${getPct(powderUSD)}%)\n\n`;
-        report += `*សរុបជី: $${fertilizerSubUSD.toLocaleString()} (${getPct(fertilizerSubUSD)}%)*\n`;
-        report += `-----------------------------\n`;
-        report += `ថ្នាំស្មៅ Herbicide: $${herbicideUSD.toLocaleString()} (${getPct(herbicideUSD)}%)\n`;
-        report += `ថ្នាំសត្វល្អិត Pesticide: $${pesticideUSD.toLocaleString()} (${getPct(pesticideUSD)}%)\n`;
-        report += `ថ្នាំជំងឺ Fungicide: $${fungicideUSD.toLocaleString()} (${getPct(fungicideUSD)}%)\n\n`;
-        report += `*សរុបថ្នាំ: $${medicineSubUSD.toLocaleString()} (${getPct(medicineSubUSD)}%)*\n`;
-        report += `-----------------------------\n`;
-        report += `💰 *សរុបរួម Total: $${grandTotalUSD.toLocaleString()}*`;
-
-        // Send the complete summary with a close button
-        await ctx.reply(report, { 
+        await ctx.editMessageText(report, {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
-                [Markup.button.callback('❌ បិទរបាយការណ៍ (Close)', 'delete_this_invoice')]
+                [Markup.button.callback('⬅️ ផ្លាស់ប្តូរថ្ងៃខែ (Change Date)', 'go_back_menu')],
+                [Markup.button.callback('❌ បិទចោល (Close)', 'close_report')]
             ])
         });
 
     } catch (err) {
-        console.error("Critical Execution Error inside bot.on:", err);
-        ctx.reply('❌ មានបញ្ហាបច្ចេកទេសក្នុងការគណនារបាយការណ៍។');
+        console.error(err);
+        ctx.reply('❌ មានបញ្ហាបច្ចេកទេសក្នុងការគណនាទិន្នន័យ។');
     }
+}
+
+// --- BUTTON CALLBACK ACTIONS ---
+bot.action('range_3_months', (ctx) => generateReport(ctx, 3));
+bot.action('range_6_months', (ctx) => generateReport(ctx, 6));
+bot.action('range_1_year', (ctx) => generateReport(ctx, 12));
+
+bot.action('go_back_menu', async (ctx) => {
+    const session = userSessions.get(ctx.from.id);
+    const name = session ? session.customerName : 'អតិថិជន';
+    await ctx.editMessageText(`👋 ជម្រាបសួរ ${name}!\nសូមជ្រើសរើសចន្លោះកាលបរិច្ឆេទដែលអ្នកចង់ពិនិត្យរបាយការណ៍ឡើងវិញ៖`, 
+        Markup.inlineKeyboard([
+            [Markup.button.callback('📅 ប្រវត្តិ ៣ ខែចុងក្រោយ (Last 3 Months)', 'range_3_months')],
+            [Markup.button.callback('📅 ប្រវត្តិ ៦ ខែចុងក្រោយ (Last 6 Months)', 'range_6_months')],
+            [Markup.button.callback('🗓️ របាយការណ៍ប្រចាំឆ្នាំ (Full 1 Year)', 'range_1_year')]
+        ])
+    );
+    await ctx.answerCbQuery();
 });
 
-// Callback listener to clear/close the report card message
-bot.action('delete_this_invoice', async (ctx) => {
-    try {
-        await ctx.deleteMessage();
-    } catch (error) {
-        console.error("Failed to delete report message:", error);
-        await ctx.editMessageText('🗑️ របាយការណ៍ចាស់ត្រូវបានលុបចេញពីអេក្រង់។');
-    }
+bot.action('close_report', async (ctx) => {
+    try { await ctx.deleteMessage(); } catch (e) { await ctx.editMessageText('🗑️ របាយការណ៍ត្រូវបានលុបចេញពីអេក្រង់។'); }
     await ctx.answerCbQuery();
 });
 
