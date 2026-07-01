@@ -73,7 +73,11 @@ bot.on('contact', async (ctx) => {
         phone = phone.replace(/[^0-9+]/g, ''); 
         if (!phone.startsWith('+')) phone = '+' + phone;
 
+        // Extracts the ID string by dropping the country code variable prefix
         const customerId = phone.replace(/^\+?855/, ''); 
+
+        // 🎯 DEBUG LOG LINK: Sends the calculated ID straight to the chat window for checking
+        await ctx.reply(`🔍 ប្រព័ន្ធកំពុងស្វែងរកលេខសម្គាល់ ID: "${customerId}"...`);
 
         const { data: customer, error: custError } = await supabase
             .from('customers')
@@ -82,7 +86,7 @@ bot.on('contact', async (ctx) => {
             .single();
 
         if (custError || !customer) {
-            return ctx.reply('❌ រកមិនឃើញប្រវត្តិរបស់អ្នកក្នុងប្រព័ន្ធឡើយ។');
+            return ctx.reply(`❌ រកមិនឃើញប្រវត្តិរបស់អ្នកក្នុងប្រព័ន្ធឡើយ។ (ប្រព័ន្ធស្វែងរកលេខសម្គាល់ ID: ${customerId} មិនឃើញក្នុងតារាង)`);
         }
 
         // Initialize state tracker fields
@@ -96,7 +100,7 @@ bot.on('contact', async (ctx) => {
 
     } catch (err) {
         console.error(err);
-        ctx.reply('❌ មានបញ្ហាបច្ចេកទេសក្នុងការតភ្ជាប់។');
+        ctx.reply('❌ 有កំហុសបច្ចេកទេសក្នុងការតភ្ជាប់។');
     }
 });
 
@@ -220,7 +224,7 @@ bot.action('close_report', async (ctx) => {
 // --- TEXT CHAT WIZARD FLOW INTERCEPTOR ---
 bot.on('text', async (ctx) => {
     const session = userSessions.get(ctx.from.id);
-    if (!session || session.step === 'idle') return; // Ignore regular conversational chatting text
+    if (!session || session.step === 'idle') return;
 
     const textInput = ctx.message.text.trim();
 
@@ -244,10 +248,7 @@ bot.on('text', async (ctx) => {
             return ctx.reply('❌ ថ្ងៃខែបញ្ចប់មិនអាចតូចជាងថ្ងៃខែចាប់ផ្តើមបានឡើយ។ សូមវាយបញ្ចូលថ្ងៃខែបញ្ចប់ម្តងទៀត៖');
         }
 
-        // Set the end time parameters to the very end of that chosen calendar day (11:59:59 PM)
         parsedEnd.setHours(23, 59, 59, 999);
-
-        // Reset tracking wizard step state back to normal
         session.step = 'idle';
 
         ctx.reply('⏳ កំពុងទាញយកទិន្នន័យ និងគណនារបាយការណ៍ សូមរង់ចាំ...');
