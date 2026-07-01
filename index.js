@@ -31,7 +31,6 @@ function parseDateString(dateStr) {
     const year = parseInt(match[3], 10);
     
     const date = new Date(year, month, day);
-    // Double check it's a real date (prevents things like 31-02-2026)
     if (date.getFullYear() === year && date.getMonth() === month && date.getDate() === day) {
         return date;
     }
@@ -66,9 +65,17 @@ async function sendMainMenu(ctx, customerName, customerId) {
     }
 }
 
-// Handler: When user clicks "Share Contact"
+// Handler: When user clicks "Share Contact" (With Advanced Security Lock)
 bot.on('contact', async (ctx) => {
     try {
+        const senderTelegramId = ctx.from.id; // Telegram ID របស់អ្នកកំពុងចុចសួរ Bot
+        const contactOwnerTelegramId = ctx.message.contact.user_id; // Telegram ID របស់ម្ចាស់កាត Contact នោះ
+
+        // 🛡️ SECURITY SHIELD: បដិសេធរាល់ការ Forward កាត Contact របស់អ្នកដទៃមកសួរ
+        if (!contactOwnerTelegramId || senderTelegramId !== contactOwnerTelegramId) {
+            return ctx.reply('⚠️ ពិនិត្យឃើញកំហុសសុវត្ថិភាព៖ សូមចុចប៊ូតុង "📲 ចែករំលែកលេខទូរស័ព្ទ" នៅផ្នែកខាងក្រោម ដើម្បីចែករំលែកលេខផ្ទាល់ខ្លួនរបស់អ្នក។ ប្រព័ន្ធមិនអនុញ្ញាតឱ្យប្រើប្រាស់លេខដែលបញ្ជូនបន្ត (Forward) ឡើយ!');
+        }
+
         let phone = ctx.message.contact.phone_number;
         phone = phone.replace(/[^0-9+]/g, ''); 
         if (!phone.startsWith('+')) phone = '+' + phone;
@@ -109,7 +116,6 @@ async function generateReport(ctx, startDate, endDate) {
     }
 
     try {
-        // Fetch invoice items matching timeframe
         const { data: items, error: itemError } = await supabase
             .from('invoice_items')
             .select(`
@@ -147,7 +153,7 @@ async function generateReport(ctx, startDate, endDate) {
         const grandTotalUSD = toUSD(grandTotalRiel);
         const getPct = (usdValue) => grandTotalUSD > 0 ? ((usdValue / grandTotalUSD) * 100).toFixed(0) : 0;
 
-        let report = `\n`.repeat(25); // Pushes content up to clear display interface
+        let report = `\n`.repeat(25);
         report += `🌾 *សូមជូនរបាយការណ៍ទិន្នន័យទិញទំនិញ*\n`;
         report += `ឈ្មោះ: *${session.customerName}* (ID: ${session.customerId})\n`;
         report += `ចន្លោះកាលបរិច្ឆេទ: ${startDate.toLocaleDateString('km-KH')} ដល់ ${endDate.toLocaleDateString('km-KH')}\n`;
@@ -177,7 +183,7 @@ async function generateReport(ctx, startDate, endDate) {
 
     } catch (err) {
         console.error(err);
-        ctx.reply('❌ មានបញ្ហាបច្គេកទេសក្នុងការគណនាទិន្នន័យ។');
+        ctx.reply('❌ មានបញ្ហាបច្ចេកទេសក្នុងការគណនាទិន្នន័យ។');
     }
 }
 
