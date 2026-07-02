@@ -18,6 +18,10 @@ if (process.env.RENDER_EXTERNAL_URL) {
     app.use(bot.webhookCallback(WEBHOOK_PATH));
 }
 
+// 🔐 SALES TEAM SECRET PASSWORD
+// 👉 អ្នកអាចប្តូរពាក្យ "SMCUS2026" ទៅជាលេខសម្ងាត់អ្វីផ្សេងដែលអ្នកចង់បាន
+const SALES_PASSWORD = 'SMCUS2026';
+
 // Memory session state tracker
 const userSessions = new Map();
 
@@ -41,7 +45,12 @@ function parseDateString(dateStr) {
 
 // Command: /start
 bot.command('start', (ctx) => {
-    ctx.reply('សូមស្វាគមន៍មកកាន់ហាងកសិកម្ម ស្រែមាស! សូមចែករំលែកលេខទូរស័ព្ទរបស់អ្នកដើម្បីពិនិត្យរបាយការណ៍។', 
+    // បង្កើត Session ថ្មី ឬរក្សាទុកប្រព័ន្ធចាស់បើធ្លាប់លេង
+    if (!userSessions.has(ctx.from.id)) {
+        userSessions.set(ctx.from.id, { step: 'idle', isSalesAuthenticated: false });
+    }
+
+    ctx.reply('🌾 សូមស្វាគមន៍មកកាន់ហាងកសិកម្ម ស្រែមាស!\n\n🔹 សម្រាប់អតិថិជន៖ សូមចុចប៊ូតុងខាងក្រោមដើម្បីឆែករបាយការណ៍ផ្ទាល់ខ្លួន\n🔹 សម្រាប់ក្រុមការងារលក់៖ សូមវាយបញ្ចូលលេខទូរស័ព្ទអតិថិជនដើម្បីស្វែងរក។', 
         Markup.keyboard([
             Markup.button.contactRequest('📲 ចែករំលែកលេខទូរស័ព្ទ (Share Contact)')
         ]).oneTime().resize()
@@ -50,7 +59,7 @@ bot.command('start', (ctx) => {
 
 // Main selection menu view component
 async function sendMainMenu(ctx, customerName, customerId) {
-    const text = `👋 ជម្រាបសួរ ${customerName}!\nសូមជ្រើសរើសចន្លោះកាលបរិច្ឆេទដែលអ្នកចង់ពិនិត្យរបាយការណ៍៖`;
+    const text = `👋 របាយការណ៍របស់អតិថិជន៖ *${customerName}*\nសូមជ្រើសរើសចន្លោះកាលបរិច្ឆេទដែលចង់ពិនិត្យ៖`;
     const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('📅 ប្រវត្តិ ៣ ខែចុងក្រោយ', 'range_3_months')],
         [Markup.button.callback('📅 ប្រវត្តិ ៦ ខែចុងក្រោយ', 'range_6_months')],
@@ -59,28 +68,26 @@ async function sendMainMenu(ctx, customerName, customerId) {
     ]);
 
     if (ctx.callbackQuery) {
-        await ctx.editMessageText(text, keyboard);
+        await ctx.editMessageText(text, { parse_mode: 'Markdown', ...keyboard });
     } else {
-        await ctx.reply(text, keyboard);
+        await ctx.reply(text, { parse_mode: 'Markdown', ...keyboard });
     }
 }
 
-// Handler: When user clicks "Share Contact" (With Advanced Security Lock)
+// Handler: When user clicks "Share Contact" (For normal customers)
 bot.on('contact', async (ctx) => {
     try {
-        const senderTelegramId = ctx.from.id; // Telegram ID របស់អ្នកកំពុងចុចសួរ Bot
-        const contactOwnerTelegramId = ctx.message.contact.user_id; // Telegram ID របស់ម្ចាស់កាត Contact នោះ
+        const senderTelegramId = ctx.from.id;
+        const contactOwnerTelegramId = ctx.message.contact.user_id;
 
-        // 🛡️ SECURITY SHIELD: បដិសេធរាល់ការ Forward កាត Contact របស់អ្នកដទៃមកសួរ
         if (!contactOwnerTelegramId || senderTelegramId !== contactOwnerTelegramId) {
-            return ctx.reply('⚠️ ពិនិត្យឃើញកំហុសសុវត្ថិភាព៖ សូមចុចប៊ូតុង "📲 ចែករំលែកលេខទូរស័ព្ទ" នៅផ្នែកខាងក្រោម ដើម្បីចែករំលែកលេខផ្ទាល់ខ្លួនរបស់អ្នក។ ប្រព័ន្ធមិនអនុញ្ញាតឱ្យប្រើប្រាស់លេខដែលបញ្ជូនបន្ត (Forward) ឡើយ!');
+            return ctx.reply('⚠️ ពិនិត្យឃើញកំហុសសុវត្ថិភាព៖ សូមចុចប៊ូតុង "📲 ចែករំលែកលេខទូរស័ព្ទ" នៅផ្នែកខាងក្រោម ដើម្បីចែករំលែកលេខផ្ទាល់ខ្លួនរបស់អ្នក។');
         }
 
         let phone = ctx.message.contact.phone_number;
         phone = phone.replace(/[^0-9+]/g, ''); 
         if (!phone.startsWith('+')) phone = '+' + phone;
 
-        // Extracts the ID string by dropping the country code variable prefix
         const customerId = phone.replace(/^\+?855/, ''); 
 
         const { data: customer, error: custError } = await supabase
@@ -93,11 +100,11 @@ bot.on('contact', async (ctx) => {
             return ctx.reply('❌ រកមិនឃើញប្រវត្តិរបស់អ្នកក្នុងប្រព័ន្ធឡើយ។');
         }
 
-        // Initialize state tracker fields
         userSessions.set(ctx.from.id, { 
             customerId: customer.id, 
             customerName: customer.name,
-            step: 'idle' 
+            step: 'idle',
+            isSalesAuthenticated: false
         });
 
         await sendMainMenu(ctx, customer.name, customer.id);
@@ -108,11 +115,42 @@ bot.on('contact', async (ctx) => {
     }
 });
 
+// Function to handle database lookup once authorized
+async function lookupCustomerByPhone(ctx, session, phoneInput) {
+    let cleanPhone = phoneInput.replace(/[^0-9+]/g, '');
+    let customerId = cleanPhone;
+    if (customerId.startsWith('+855')) customerId = customerId.replace('+855', '');
+    else if (customerId.startsWith('855')) customerId = customerId.replace('855', '');
+    else if (customerId.startsWith('0')) customerId = customerId.substring(1);
+
+    try {
+        const { data: customer, error: custError } = await supabase
+            .from('customers')
+            .select('id, name')
+            .eq('id', customerId)
+            .single();
+
+        if (custError || !customer) {
+            return ctx.reply(`❌ រកមិនឃើញអតិថិជនដែលមានលេខទូរស័ព្ទនេះទេ! (ID ស្វែងរក៖ ${customerId})`);
+        }
+
+        // Save target customer to active session metadata
+        session.customerId = customer.id;
+        session.customerName = customer.name;
+        session.step = 'idle';
+
+        await sendMainMenu(ctx, customer.name, customer.id);
+    } catch (err) {
+        console.error(err);
+        ctx.reply('❌ មានបញ្ហាបច្ចេកទេសក្នុងការតភ្ជាប់។');
+    }
+}
+
 // --- DYNAMIC CORE ENGINE ---
 async function generateReport(ctx, startDate, endDate) {
     const session = userSessions.get(ctx.from.id);
     if (!session) {
-        return ctx.reply('⚠️ សេសសិនរបស់អ្នកបានផុតកំណត់។ សូមចែករំលែកលេខទូរស័ព្ទម្តងទៀត (/start)។');
+        return ctx.reply('⚠️ សេសសិនបានផុតកំណត់។ សូមវាយបញ្ចូលលេខទូរស័ព្ទអតិថិជនម្តងទៀត។');
     }
 
     try {
@@ -127,14 +165,10 @@ async function generateReport(ctx, startDate, endDate) {
             .lte('invoices.invoice_date', endDate.toISOString());
 
         if (itemError || !items || items.length === 0) {
-            const emptyMsg = `👋 ជម្រាបសួរ ${session.customerName}!\nមិនមានប្រវត្តិទិញទំនិញក្នុងចន្លោះកាលបរិច្ឆេទនេះឡើយ៖\n📍 ពី ${startDate.toLocaleDateString('km-KH')} ដល់ ${endDate.toLocaleDateString('km-KH')}`;
+            const emptyMsg = `👋 របាយការណ៍របស់៖ *${session.customerName}*\nមិនមានប្រវត្តិទិញទំនិញក្នុងចន្លោះកាលបរិច្ឆេទនេះឡើយ៖\n📍 ពី ${startDate.toLocaleDateString('km-KH')} ដល់ ${endDate.toLocaleDateString('km-KH')}`;
             const emptyKb = Markup.inlineKeyboard([[Markup.button.callback('⬅️ ត្រឡប់ក្រោយ (Go Back)', 'go_back_menu')]]);
             
-            if (ctx.callbackQuery) {
-                return ctx.editMessageText(emptyMsg, emptyKb);
-            } else {
-                return ctx.reply(emptyMsg, emptyKb);
-            }
+            return ctx.reply(emptyMsg, { parse_mode: 'Markdown', ...emptyKb });
         }
 
         let totals = { 'Granular Fertilizer': 0, 'Liquid Fertilizer': 0, 'Powder Fertilizer': 0, 'Pesticide': 0, 'Fungicide': 0, 'Herbicide': 0 };
@@ -226,25 +260,58 @@ bot.action('close_report', async (ctx) => {
 
 // --- TEXT CHAT WIZARD FLOW INTERCEPTOR ---
 bot.on('text', async (ctx) => {
-    const session = userSessions.get(ctx.from.id);
-    if (!session || session.step === 'idle') return;
-
+    const userId = ctx.from.id;
+    
+    // បង្កើត Session បើមិនទាន់មាន
+    if (!userSessions.has(userId)) {
+        userSessions.set(userId, { step: 'idle', isSalesAuthenticated: false });
+    }
+    
+    const session = userSessions.get(userId);
     const textInput = ctx.message.text.trim();
 
+    // 🔐 ករណីទី១៖ កំពុងស្ថិតក្នុងដំណាក់កាលទាមទារលេខសម្ងាត់ (Verifying Password)
+    if (session.step === 'awaiting_sales_password') {
+        if (textInput === SALES_PASSWORD) {
+            session.isSalesAuthenticated = true;
+            ctx.reply('✅ លេខសម្ងាត់ត្រឹមត្រូវ! ប្រព័ន្ធបានបើកសិទ្ធិជូនក្រុមការងារលក់ជោគជ័យ។');
+            
+            // បន្តទៅទាញទិន្នន័យលេខទូរស័ព្ទដែល Sales បានវាយមុននេះភ្លាមៗ
+            return await lookupCustomerByPhone(ctx, session, session.pendingQueryPhone);
+        } else {
+            session.step = 'idle';
+            return ctx.reply('❌ លេខសម្ងាត់មិនត្រឹមត្រូវទេ! បដិសេធការចូលស្វែងរក។');
+        }
+    }
+
+    // 🔎 ករណីទី២៖ ក្រុមការងារលក់ វាយបញ្ចូលលេខទូរស័ព្ទដើម្បីស្វែងរក
+    if (session.step === 'idle' && (textInput.match(/^\d+$/) || textInput.startsWith('+'))) {
+        // បើមិនទាន់បានវាយលេខសម្ងាត់ផ្ទៀងផ្ទាត់ទេ
+        if (!session.isSalesAuthenticated) {
+            session.step = 'awaiting_sales_password';
+            session.pendingQueryPhone = textInput; // រក្សាទុកលេខទូរស័ព្ទដែលចង់ស្វែងរកបណ្តោះអាសន្ន
+            return ctx.reply('🔐 មុខងារស្វែងរកនេះសម្រាប់តែក្រុមការងារលក់ប៉ុណ្ណោះ។ សូមវាយបញ្ចូលលេខសម្ងាត់ដើម្បីបន្ត៖');
+        }
+        
+        // បើធ្លាប់វាយលេខសម្ងាត់ត្រូវរួចហើយ គឺរត់ទៅរកទិន្នន័យតែម្តង
+        return await lookupCustomerByPhone(ctx, session, textInput);
+    }
+
+    // 📅 ករណីទី៣៖ ដំណាក់កាលរើសកាលបរិច្ឆេទ Custom Range
     if (session.step === 'awaiting_start_date') {
         const parsedStart = parseDateString(textInput);
         if (!parsedStart) {
-            return ctx.reply('❌ ទម្រង់ថ្ងៃខែមិនត្រឹមត្រូវឡើយ។ សូមព្យាយាមម្តងទៀតដោយវាយបញ្ចូលតាមទម្រង់ `DD-MM-YYYY` (ឧទាហរណ៍៖ `01-01-2026`)៖');
+            return ctx.reply('❌ ទម្រង់ថ្ងៃខែមិនត្រឹមត្រូវឡើយ។ សូមព្យាយាមម្តងទៀតតាមទម្រង់ `DD-MM-YYYY`៖');
         }
         session.customStartDate = parsedStart;
         session.step = 'awaiting_end_date';
-        return ctx.reply(`✅ ទទួលបានថ្ងៃចាប់ផ្តើម៖ ${parsedStart.toLocaleDateString('km-KH')}\n\n📅 បន្ទាប់មកទៀត សូមវាយបញ្ចូល *ថ្ងៃខែឆ្នាំបញ្ចប់* (\`DD-MM-YYYY\`)៖`, { parse_mode: 'Markdown' });
+        return ctx.reply(`✅ ទទួលបានថ្ងៃចាប់ផ្តើម៖ ${parsedStart.toLocaleDateString('km-KH')}\n\n📅 សូមវាយបញ្ចូល *ថ្ងៃខែឆ្នាំបញ្ចប់* (\`DD-MM-YYYY\`)៖`, { parse_mode: 'Markdown' });
     }
 
     if (session.step === 'awaiting_end_date') {
         const parsedEnd = parseDateString(textInput);
         if (!parsedEnd) {
-            return ctx.reply('❌ ទម្រង់ថ្ងៃខែមិនត្រឹមត្រូវឡើយ។ សូមព្យាយាមម្តងទៀតដោយវាយបញ្ចូលតាមទម្រង់ `DD-MM-YYYY` (ឧទាហរណ៍៖ `30-06-2026`)៖');
+            return ctx.reply('❌ ទម្រង់ថ្ងៃខែមិនត្រឹមត្រូវឡើយ។ សូមព្យាយាមម្តងទៀតតាមទម្រង់ `DD-MM-YYYY`៖');
         }
         
         if (parsedEnd < session.customStartDate) {
